@@ -108,7 +108,7 @@ func (b *Bot) handleWeather(ctx context.Context, chatID int64) {
 	b.sendMessage(ctx, chatID, formatSnapshot(snapshot))
 }
 
-func (b *Bot) sendMessage(ctx context.Context, chatID int64, text string) error {
+func (b *Bot) sendMessage(ctx context.Context, chatID int64, text string) {
 	_, err := b.api.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: chatID,
 		Text:   text,
@@ -120,7 +120,5 @@ func (b *Bot) sendMessage(ctx context.Context, chatID int64, text string) error 
 			slog.Int("text_len", len(text)),
 			slog.Any("error", err),
 		)
-		return err
 	}
-	return nil
 }
