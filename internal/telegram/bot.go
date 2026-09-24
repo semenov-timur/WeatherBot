@@ -3,6 +3,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
@@ -10,24 +11,34 @@ import (
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
+	"github.com/semenov-timur/weatherbot/internal/domain"
 )
 
 // Bot представляет собой обертку над Telegram-ботом,
 // инкапсулирующую логику работы с API и логирование.
 type Bot struct {
-	api *bot.Bot
-	log *slog.Logger
+	api     *bot.Bot
+	weather weatherSource
+	loc     domain.Location
+	log     *slog.Logger
+}
+
+type weatherSource interface {
+	Current(ctx context.Context, loc domain.Location) (domain.Snapshot, error)
 }
 
 // New создает и инициализирует новый экземпляр [Bot] с указанным токеном.
 //
 // В случае ошибки создания бота, функция маскирует токен в сообщении об ошибке.
-func New(token string, log *slog.Logger) (*Bot, error) {
+func New(token string, weather weatherSource, loc domain.Location, log *slog.Logger) (*Bot, error) {
 	if log == nil {
-		return nil, fmt.Errorf("no logger provided")
+		return nil, errors.New("logger is required")
+	}
+	if weather == nil {
+		return nil, errors.New("weather source is required")
 	}
 
-	b := &Bot{log: log}
+	b := &Bot{weather: weather, loc: loc, log: log}
 	handlerFunc := b.handleUpdate
 
 	apiBot, err := bot.New(token, bot.WithDefaultHandler(handlerFunc))
@@ -53,8 +64,6 @@ func (b *Bot) Run(ctx context.Context) error {
 }
 
 // handleUpdate обрабатывает входящие обновления от Telegram API.
-// На данный момент метод реализует простейшее эхо: принимает текстовые сообщения
-// и отправляет их обратно пользователю в тот же чат.
 func (b *Bot) handleUpdate(ctx context.Context, api *bot.Bot, update *models.Update) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -76,22 +85,42 @@ func (b *Bot) handleUpdate(ctx context.Context, api *bot.Bot, update *models.Upd
 		return
 	}
 
-	b.log.DebugContext(
-		ctx, "incoming message",
-		slog.Int64("chat_id", update.Message.Chat.ID),
-		slog.Int("text_len", len(update.Message.Text)),
-	)
+	switch update.Message.Text {
+	case "/weather", "/now":
+		b.handleWeather(ctx, update.Message.Chat.ID)
+	default:
+		b.log.DebugContext(
+			ctx, "incoming message",
+			slog.Int64("chat_id", update.Message.Chat.ID),
+			slog.Int("text_len", len(update.Message.Text)),
+		)
+		b.sendMessage(ctx, update.Message.Chat.ID, update.Message.Text)
+	}
+}
 
-	_, err := api.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: update.Message.Chat.ID,
-		Text:   update.Message.Text,
+func (b *Bot) handleWeather(ctx context.Context, chatID int64) {
+	snapshot, err := b.weather.Current(ctx, b.loc)
+	if err != nil {
+		b.log.ErrorContext(ctx, "weather service failed", slog.Any("error", err))
+		b.sendMessage(ctx, chatID, "Не получилось узнать погоду, попробуй через пару минут")
+		return
+	}
+	b.sendMessage(ctx, chatID, formatSnapshot(snapshot))
+}
+
+func (b *Bot) sendMessage(ctx context.Context, chatID int64, text string) error {
+	_, err := b.api.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID: chatID,
+		Text:   text,
 	})
 	if err != nil {
 		b.log.WarnContext(
 			ctx, "send message",
-			slog.Int64("chat_id", update.Message.Chat.ID),
-			slog.Int("text_len", len(update.Message.Text)),
+			slog.Int64("chat_id", chatID),
+			slog.Int("text_len", len(text)),
 			slog.Any("error", err),
 		)
+		return err
 	}
+	return nil
 }
