@@ -11,7 +11,8 @@ import (
 // Config содержит все глобальные настройки, необходимые для работы приложения.
 type Config struct {
 	// TelegramToken — секретный токен для авторизации Telegram-бота.
-	TelegramToken string
+	TelegramToken     string
+	OpenWeatherAPIKey string
 }
 
 // Load загружает конфигурацию из переменных окружения, проводит её валидацию
@@ -24,7 +25,11 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	return Config{TelegramToken: token}, nil
+	openWeatherAPIKey, err := requireEnv("OPEN_WEATHER_API_KEY")
+	if err != nil {
+		return Config{}, err
+	}
+	return Config{TelegramToken: token, OpenWeatherAPIKey: openWeatherAPIKey}, nil
 }
 
 // requireEnv извлекает значение переменной окружения по ключу key.
